@@ -70,7 +70,7 @@ function extractJobsText(html: string): string {
   return root.structuredText
     .replace(/\n{3,}/g, "\n\n")
     .trim()
-    .slice(0, 80000); // cap to avoid huge context windows
+    .slice(0, 500000); // Haiku 4.5 supports 200k input tokens (~800k chars); 500k chars ≈ 125k tokens
 }
 
 // ─── Claude scoring ──────────────────────────────────────────────────────────
@@ -182,7 +182,7 @@ async function scoreJobs(jobsText: string): Promise<ClaudeResult> {
 
   const message = await client.messages.create({
     model: "claude-haiku-4-5",
-    max_tokens: 8000,
+    max_tokens: 16000,
     system: SYSTEM_PROMPT,
     messages: [
       {
@@ -199,6 +199,10 @@ async function scoreJobs(jobsText: string): Promise<ClaudeResult> {
 
   // Strip accidental markdown fences
   const clean = raw.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
+
+  if (message.stop_reason === "max_tokens") {
+    throw new Error(`Claude hit max_tokens limit — response truncated. Increase max_tokens or reduce input.`);
+  }
 
   try {
     return JSON.parse(clean) as ClaudeResult;
@@ -309,7 +313,7 @@ async function main() {
   console.log(`\nHN Job Scout — ${runDate}`);
 
   // Validate env
-  const missing = ["ANTHROPIC_API_KEY", "RESEND_API_KEY"].filter((k) => !process.env[k]);
+  const missing = ["ANTHROPIC_API_KEY", "RESEND_API_KEY", "TO_EMAIL"].filter((k) => !process.env[k]);
   if (missing.length) {
     console.error(`Missing env vars: ${missing.join(", ")}`);
     process.exit(1);
