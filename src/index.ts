@@ -64,13 +64,16 @@ async function fetchJobsPage(): Promise<string> {
 
 function extractJobsText(html: string): string {
   const root = parse(html);
-  // Remove script/style noise
   root.querySelectorAll("script, style, nav, header, footer").forEach((el) => el.remove());
-  // Get text, collapse whitespace
+  // Inline all link URLs so Claude can copy real URLs instead of hallucinating them
+  root.querySelectorAll("a[href]").forEach((el) => {
+    const href = el.getAttribute("href") ?? "";
+    if (href) el.replaceWith(`${el.text} [${href}]`);
+  });
   return root.structuredText
     .replace(/\n{3,}/g, "\n\n")
     .trim()
-    .slice(0, 500000); // Haiku 4.5 supports 200k input tokens (~800k chars); 500k chars ≈ 125k tokens
+    .slice(0, 500000);
 }
 
 // ─── Claude scoring ──────────────────────────────────────────────────────────
@@ -86,22 +89,23 @@ PROFILE:
 - Backend (supporting): Node.js, Fastify, PostGIS, Redis, Supabase, Python
 - Seniority: Senior preferred, open to lead/staff
 - Type: Full-time OR contract/freelance
-- Location: Netherlands-based, leaving for Thailand Dec/Jan. Remote strongly preferred. Hybrid ok in NL/EU. No relocation.
+- Location: Netherlands-based (CET/CEST = GMT+1/+2), splitting time with Thailand (ICT = GMT+7). Remote required globally. Hybrid ok only in NL/EU. No relocation. No US/Canadian work authorization — cannot accept roles restricted to US/Canada/Americas residency or work auth.
 
 SCORING (cap base score at 10, then add mission bonus):
 Base score:
 +3 React + TypeScript both mentioned
 +3 GIS/mapping/spatial/Deck.gl/Mapbox/MapLibre mentioned
-+2 data visualization/dashboards/D3/charting mentioned
-+2 GLSL/WebGL shaders/custom map layers mentioned
++3 data visualization/dashboards/D3/charting mentioned
++3 GLSL/WebGL shaders/custom map layers mentioned
 +2 AI/LLM/Claude/MCP/agentic tooling mentioned
-+2 Three.js/React Three Fiber/3D web mentioned
++3 Three.js/React Three Fiber/3D web mentioned
 +3 async-first or async-friendly culture explicitly mentioned
-+2 remote explicitly supported
++2 remote explicitly and globally supported ("work from anywhere", "worldwide", no geo restriction stated) — rewards genuine flexibility beyond just passing the location filter
++2 Node.js mentioned as a primary backend language
++1 Python mentioned as a backend language
 +1 contract/freelance offered
 +1 civic tech/open source/public interest mentioned
 -2 requires onsite outside Netherlands
--3 no remote option at all
 
 Mission bonus (max +3, stacks on top):
 +3 climate/environment/biodiversity/conservation/sustainability
@@ -113,37 +117,36 @@ RULES:
 - Score ONLY based on what is explicitly written. Do not infer or assume.
 - A score above 10 (before mission bonus) means you made an error — recheck.
 - NEVER invent job postings. Only score what is in the provided text.
+- URLs (applyLink, hnUrl) must be copied exactly and completely from the source text — never truncate or add "...". The source text contains links in the format "link text [url]"; use the url inside the brackets. For hnUrl, use the URL from the "Original Post [url]" marker. If no URL is found, return an empty string.
 
-Return ONLY valid JSON in this exact shape, no markdown fences, no preamble:
-{
-  "month": "June 2026",
-  "matches": [
-    {
-      "id": "HN comment ID (digits only) or 'CompanyName|RoleTitle' fallback",
-      "company": "Company name",
-      "role": "Role title",
-      "type": "Full-time|Contract|Both",
-      "location": "location string",
-      "score": 8,
-      "missionBonus": 3,
-      "applyLink": "URL or email",
-      "hnUrl": "https://news.ycombinator.com/item?id=XXXXXXXX or empty string",
-      "whyItMatches": "2-3 sentences naming specific skill overlaps",
-      "mission": "One sentence on mission fit, or empty string if purely commercial",
-      "originalPosting": "Full verbatim text of the posting"
-    }
-  ],
-  "closeMisses": [
-    {
-      "company": "Company name",
-      "role": "Role title",
-      "score": 5,
-      "missionBonus": 0,
-      "reason": "One sentence on why it didn't make the cut"
-    }
-  ]
-}
+LOCATION FILTER — assume geographic restriction unless the posting explicitly says otherwise.
+Only pass a posting if it clearly meets one of:
+- "Remote" or "Fully remote" with no geographic qualifier (bare "Remote" on HN = assume global)
+- Remote with an explicit EU/Europe/worldwide/global qualifier
+- Onsite or hybrid with an office in the Netherlands or EU (Paris, Amsterdam, Berlin, Warsaw, etc. are EU; Seattle, SF, NYC, Boston, Toronto are NOT EU)
 
+Everything else is EXCLUDED. "Remote (US)", "Remote (US/Canada)", "SF (Hybrid or Remote)",
+"US-Based / Remote", a US/Canadian city with no global-remote clause — all EXCLUDED.
+When in doubt, exclude.
+
+STACK FILTER — two hard conditions, both must pass:
+1. JavaScript or TypeScript must be explicitly mentioned as a primary language of the role.
+   If the posting does not mention JS or TS at all, or only mentions them as a footnote, EXCLUDE it.
+   Roles whose core stack is Python, Rust, Go, Java, Kotlin, C++, C#, Swift, Ruby, PHP with no
+   JS/TS frontend work described are EXCLUDED.
+2. The role must be frontend or full-stack. Roles titled or described as "Backend Engineer",
+   "Platform Engineer", "Infrastructure Engineer", "Data Engineer", "DevOps", "ML Engineer",
+   "Perception Engineer", "GEO-AI Engineer", "Radar Engineer", etc. with no frontend component
+   described are EXCLUDED. "Product Engineer", "Software Engineer", "Full-Stack Engineer",
+   "Senior/Staff Engineer" are fine.
+
+FILTER ENFORCEMENT — this is critical:
+- Any posting that fails LOCATION FILTER must NOT appear in matches. Period.
+- Any posting that fails STACK FILTER must NOT appear in matches. Period.
+- If you find yourself writing "this should be excluded but..." in a match — stop. Move it to close misses or omit it.
+- Close misses are for postings that passed both filters but scored only 4–5.
+
+Call the report_jobs tool with your results.
 Only include matches with score + missionBonus >= 6.
 Include 1-2 close misses (score 4-5 before disqualification).
 Sort matches by (score + missionBonus) descending.`;
@@ -160,7 +163,6 @@ interface JobMatch {
   hnUrl: string;
   whyItMatches: string;
   mission: string;
-  originalPosting: string;
 }
 
 interface CloseMiss {
@@ -177,38 +179,74 @@ interface ClaudeResult {
   closeMisses: CloseMiss[];
 }
 
+const REPORT_JOBS_TOOL: Anthropic.Messages.Tool = {
+  name: "report_jobs",
+  description: "Submit the scored and filtered job matches",
+  input_schema: {
+    type: "object",
+    properties: {
+      month: { type: "string" },
+      matches: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            id: { type: "string" },
+            company: { type: "string" },
+            role: { type: "string" },
+            type: { type: "string" },
+            location: { type: "string" },
+            score: { type: "integer" },
+            missionBonus: { type: "integer" },
+            applyLink: { type: "string" },
+            hnUrl: { type: "string" },
+            whyItMatches: { type: "string" },
+            mission: { type: "string" },
+          },
+          required: ["id", "company", "role", "type", "location", "score", "missionBonus", "applyLink", "hnUrl", "whyItMatches", "mission"],
+        },
+      },
+      closeMisses: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            company: { type: "string" },
+            role: { type: "string" },
+            score: { type: "integer" },
+            missionBonus: { type: "integer" },
+            reason: { type: "string" },
+          },
+          required: ["company", "role", "score", "missionBonus", "reason"],
+        },
+      },
+    },
+    required: ["month", "matches", "closeMisses"],
+  },
+};
+
 async function scoreJobs(jobsText: string): Promise<ClaudeResult> {
   const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
 
   const message = await client.messages.create({
-    model: "claude-haiku-4-5",
+    model: "claude-sonnet-4-6",
     max_tokens: 16000,
     system: SYSTEM_PROMPT,
+    tools: [REPORT_JOBS_TOOL],
+    tool_choice: { type: "tool", name: "report_jobs" },
     messages: [
       {
         role: "user",
-        content: `Here are the job postings from the HN hiring thread. Score them against my profile and return JSON.\n\n${jobsText}`,
+        content: `Here are the job postings from the HN hiring thread. Score them against my profile and call report_jobs with the results.\n\n${jobsText}`,
       },
     ],
   });
 
-  const raw = message.content
-    .filter((b) => b.type === "text")
-    .map((b) => (b as { type: "text"; text: string }).text)
-    .join("");
-
-  // Strip accidental markdown fences
-  const clean = raw.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
-
-  if (message.stop_reason === "max_tokens") {
-    throw new Error(`Claude hit max_tokens limit — response truncated. Increase max_tokens or reduce input.`);
+  const toolUse = message.content.find((b): b is Anthropic.Messages.ToolUseBlock => b.type === "tool_use");
+  if (!toolUse) {
+    throw new Error("Model did not call the report_jobs tool");
   }
-
-  try {
-    return JSON.parse(clean) as ClaudeResult;
-  } catch {
-    throw new Error(`Claude returned invalid JSON:\n${clean.slice(0, 500)}`);
-  }
+  return toolUse.input as ClaudeResult;
 }
 
 // ─── Deduplication ───────────────────────────────────────────────────────────
@@ -253,9 +291,6 @@ function formatEmail(result: ClaudeResult, runDate: string): { subject: string; 
     lines.push("");
     lines.push(`Why it matches: ${m.whyItMatches}`);
     if (m.mission) lines.push(`Mission: ${m.mission}`);
-    lines.push("");
-    lines.push("Original posting:");
-    lines.push(m.originalPosting);
     lines.push("");
   }
 
