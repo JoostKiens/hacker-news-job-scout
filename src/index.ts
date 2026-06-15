@@ -112,6 +112,7 @@ Mission bonus (max +3, stacks on top):
 +2 science communication/open data/journalism tools/public health
 +2 humanitarian tech/international development/civic infrastructure
 +1 B-corp/non-profit/explicit social or environmental mission
+-2 Military, defense, surveillance, adtech, crypto, web3, or any role that could be used for harm
 
 RULES:
 - Score ONLY based on what is explicitly written. Do not infer or assume.
