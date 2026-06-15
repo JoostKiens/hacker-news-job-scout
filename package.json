@@ -1,0 +1,20 @@
+{
+  "name": "hn-job-scout",
+  "version": "1.0.0",
+  "description": "Fetches HN Who is Hiring, scores jobs against a profile via Claude, sends digest via Resend",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.52.0",
+    "node-html-parser": "^6.1.13"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
+  }
+}
