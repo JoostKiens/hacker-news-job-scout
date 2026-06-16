@@ -17,10 +17,8 @@ const FALLBACK_URL = "https://hnjobs.emilburzo.com";
 
 function loadSeenIds(): Set<string> {
   try {
-    if (fs.existsSync(SEEN_IDS_PATH)) {
-      const raw = fs.readFileSync(SEEN_IDS_PATH, "utf-8");
-      return new Set(JSON.parse(raw));
-    }
+    const raw = fs.readFileSync(SEEN_IDS_PATH, "utf-8");
+    return new Set(JSON.parse(raw));
   } catch (e) {
     console.warn("Could not load seen_ids, starting fresh:", e);
   }
@@ -252,15 +250,6 @@ async function scoreJobs(jobsText: string): Promise<ClaudeResult> {
 
 // ─── Deduplication ───────────────────────────────────────────────────────────
 
-function filterSeen(result: ClaudeResult, seenIds: Set<string>): ClaudeResult {
-  const matches = result.matches.filter((m) => !seenIds.has(m.id));
-  return { ...result, matches };
-}
-
-function collectNewIds(matches: JobMatch[]): string[] {
-  return matches.map((m) => m.id);
-}
-
 // ─── Format email ────────────────────────────────────────────────────────────
 
 function formatEmail(result: ClaudeResult, runDate: string): { subject: string; text: string } {
@@ -386,7 +375,7 @@ async function main() {
   }
 
   // Deduplicate
-  const deduplicated = filterSeen(result, seenIds);
+  const deduplicated = { ...result, matches: result.matches.filter((m) => !seenIds.has(m.id)) };
   const newCount = deduplicated.matches.length;
   console.log(`After deduplication: ${newCount} new matches`);
 
@@ -401,7 +390,7 @@ async function main() {
   }
 
   // Persist new IDs
-  const newIds = collectNewIds(deduplicated.matches);
+  const newIds = deduplicated.matches.map((m) => m.id);
   newIds.forEach((id) => seenIds.add(id));
   saveSeenIds(seenIds);
   console.log(`Saved ${newIds.length} new IDs (total: ${seenIds.size})`);
